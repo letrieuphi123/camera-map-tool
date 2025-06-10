@@ -227,6 +227,23 @@
             color: #4a5568;
             word-break: break-all;
         }
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+            display: none; /* Hidden by default */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -238,7 +255,7 @@
             <h2 class="text-2xl font-semibold text-gray-700 mb-4">Bản đồ địa hình</h2>
             <div class="controls mb-4">
                 <label for="mapUpload" class="custom-file-upload">
-                    Tải lên bản đồ
+                    Tải lên bản đồ <span id="mapUploadSpinner" class="loading-spinner"></span>
                 </label>
                 <input type="file" id="mapUpload" accept="image/*">
                 <button id="clearMarkersButton" class="button bg-gray-500 hover:bg-gray-600">Xóa tất cả điểm đánh dấu</button>
@@ -262,7 +279,7 @@
             <h2 class="text-2xl font-semibold text-gray-700 mb-4">Quản lý điểm đánh dấu và xem ảnh</h2>
             <div class="controls mb-4">
                 <label for="markerImageUpload" class="custom-file-upload">
-                    Tải lên ảnh cho điểm đánh dấu
+                    Tải lên ảnh cho điểm đánh dấu <span id="markerUploadSpinner" class="loading-spinner"></span>
                 </label>
                 <input type="file" id="markerImageUpload" accept="image/*" disabled>
                 <button id="rotateLeftButton" class="button" disabled>Xoay trái 15°</button>
@@ -290,18 +307,23 @@
     <div id="messageBox" class="message-box"></div>
 
     <script type="module">
-        // Firebase imports - KHÔNG THAY ĐỔI CÁC DÒNG NÀY.
+        // Firebase imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // New: Import Cloud Storage functions
+        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
+
 
         // DOM elements
         const mapUploadInput = document.getElementById('mapUpload');
+        const mapUploadSpinner = document.getElementById('mapUploadSpinner'); // Spinner
         const mapImage = document.getElementById('mapImage');
         const mapContainer = document.getElementById('mapContainer');
         const mapWrapper = document.getElementById('mapWrapper');
         const mapPlaceholder = document.getElementById('mapPlaceholder');
         const markerImageUploadInput = document.getElementById('markerImageUpload');
+        const markerUploadSpinner = document.getElementById('markerUploadSpinner'); // Spinner
         const rotateLeftButton = document.getElementById('rotateLeftButton');
         const rotateRightButton = document.getElementById('rotateRightButton');
         const deleteMarkerButton = document.getElementById('deleteMarkerButton');
@@ -345,6 +367,7 @@
         let app;
         let db;
         let auth;
+        let storage; // New: Firebase Storage instance
         let currentUserId = null;
 
         // --- CẤU HÌNH FIREBASE CỦA BẠN ---
@@ -354,29 +377,25 @@
              apiKey: "AIzaSyBfvHmr8lQerlF8pX_CCg1h7f5S8KCaAfk",
              authDomain: "cameramaptoolapp.firebaseapp.com",
              projectId: "cameramaptoolapp",
-             storageBucket: "cameramaptoolapp.firebasestorage.app",
+             storageBucket: "cameramaptoolapp.firebasestorage.app", // Make sure this is correct for Storage
              messagingSenderId: "978491500497",
              appId: "1:978491500497:web:3dee14f2aaa9270234a2f0"
         };
-        const MY_APP_ID = MY_FIREBASE_CONFIG.appId; // Lấy APP_ID từ cấu hình của bạn
+        const MY_APP_ID = MY_FIREBASE_CONFIG.appId;
 
-        // KHÔNG THAY ĐỔI CÁC DÒNG SAU ĐÂY NỮA
-        // Các biến này được cung cấp tự động trong môi trường Canvas.
-        // Nếu bạn chạy cục bộ, các biến này sẽ là 'undefined' hoặc null, và code sẽ dùng MY_FIREBASE_CONFIG.
         const CANVAS_FIREBASE_CONFIG = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
         const CANVAS_INITIAL_AUTH_TOKEN = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // Chọn cấu hình để dùng: ưu tiên cấu hình Canvas nếu có, nếu không thì dùng cấu hình MY_FIREBASE_CONFIG
-        // Điều này đảm bảo ứng dụng hoạt động cả trong Canvas và khi chạy cục bộ/GitHub Pages.
         const FINAL_FIREBASE_CONFIG = Object.keys(CANVAS_FIREBASE_CONFIG).length > 0 ? CANVAS_FIREBASE_CONFIG : MY_FIREBASE_CONFIG;
-        const FINAL_APP_ID = FINAL_FIREBASE_CONFIG.appId || MY_APP_ID; // Lấy APP_ID từ cấu hình cuối cùng
+        const FINAL_APP_ID = FINAL_FIREBASE_CONFIG.appId || MY_APP_ID;
 
 
-        // Khởi tạo Firebase (phần này sẽ dùng cấu hình được chọn ở trên)
+        // Initialize Firebase
         if (Object.keys(FINAL_FIREBASE_CONFIG).length > 0 && FINAL_FIREBASE_CONFIG.apiKey) {
             app = initializeApp(FINAL_FIREBASE_CONFIG);
             db = getFirestore(app);
             auth = getAuth(app);
+            storage = getStorage(app); // New: Initialize Firebase Storage
 
             onAuthStateChanged(auth, async (user) => {
                 if (user) {
@@ -385,10 +404,10 @@
                     updateControls();
                 } else {
                     try {
-                        if (CANVAS_INITIAL_AUTH_TOKEN) { // Dùng token Canvas nếu có
+                        if (CANVAS_INITIAL_AUTH_TOKEN) {
                             await signInWithCustomToken(auth, CANVAS_INITIAL_AUTH_TOKEN);
                         } else {
-                            await signInAnonymously(auth); // Hoặc đăng nhập ẩn danh
+                            await signInAnonymously(auth);
                         }
                     } catch (error) {
                         console.error("Lỗi xác thực Firebase:", error);
@@ -409,11 +428,37 @@
             messageBox.textContent = message;
             messageBox.style.display = 'block';
             messageBox.style.opacity = 1;
-            if (duration > 0) { // If duration is 0, it's indefinite
+            if (duration > 0) {
                 setTimeout(() => {
                     messageBox.style.opacity = 0;
                     setTimeout(() => messageBox.style.display = 'none', 500);
                 }, duration);
+            }
+        }
+
+        // New: Hàm tải ảnh lên Cloud Storage
+        async function uploadImageToStorage(file, path, spinnerElement) {
+            if (!storage) {
+                showMessage("Lỗi: Firebase Storage chưa được khởi tạo. Vui lòng kiểm tra cấu hình Firebase.", 5000);
+                return null;
+            }
+            if (!file) return null;
+
+            spinnerElement.style.display = 'inline-block'; // Show spinner
+            showMessage("Đang tải ảnh lên...", 0); // Show indefinite message
+
+            const storageRef = ref(storage, path);
+            try {
+                const uploadTask = await uploadBytes(storageRef, file);
+                const downloadURL = await getDownloadURL(uploadTask.ref);
+                showMessage("Ảnh đã tải lên thành công!");
+                return downloadURL;
+            } catch (error) {
+                console.error("Lỗi khi tải ảnh lên Cloud Storage:", error);
+                showMessage(`Lỗi tải ảnh: ${error.message}. Vui lòng kiểm tra quyền truy cập Storage.`);
+                return null;
+            } finally {
+                spinnerElement.style.display = 'none'; // Hide spinner
             }
         }
 
@@ -482,8 +527,9 @@
             zoomInButton.disabled = !hasMap;
             zoomOutButton.disabled = !hasMap;
             fullscreenMapButton.disabled = !hasMap;
-            saveConfigButton.disabled = !hasMap || !currentUserId; // Disable save if no map or not authenticated
-            loadConfigButton.disabled = !currentUserId; // Disable load if not authenticated
+            // Disable save if no map, not authenticated, or map image hasn't been set
+            saveConfigButton.disabled = !hasMap || !currentUserId || !mapImage.src;
+            loadConfigButton.disabled = !currentUserId;
         }
 
         // --- Firebase Data Handling ---
@@ -500,19 +546,18 @@
 
             showMessage("Đang lưu cấu hình...", 0); // Show indefinite message
             const configData = {
-                mapImageSrc: mapImage.src, // Base64 của ảnh bản đồ
+                mapImageSrc: mapImage.src, // This will now be a URL from Cloud Storage
                 markers: markers.map(marker => ({
                     id: marker.id,
                     originalX: marker.originalX,
                     originalY: marker.originalY,
                     rotation: marker.rotation,
                     size: marker.size,
-                    image: marker.image // Base64 của ảnh điểm đánh dấu
+                    image: marker.image // This will now be a URL from Cloud Storage
                 }))
             };
 
             try {
-                // Lưu cấu hình vào đường dẫn công khai, có thể truy cập bởi appId
                 const docRef = doc(db, `artifacts/${FINAL_APP_ID}/public/data/mapConfigurations`, 'mainMapConfig');
                 await setDoc(docRef, configData);
                 showMessage("Cấu hình đã được lưu thành công!");
@@ -536,27 +581,26 @@
                 if (docSnap.exists()) {
                     const configData = docSnap.data();
                     
-                    // Xóa các marker hiện có trên bản đồ trước khi tải mới
+                    // Clear existing markers before loading new ones
                     markers.forEach(m => m.element.remove());
                     markers = [];
                     selectedMarker = null;
-                    markerCounter = 0; // Đặt lại bộ đếm cho các marker mới
+                    markerCounter = 0;
 
-                    // Tải ảnh bản đồ
+                    // Load map image from URL
                     mapImage.src = configData.mapImageSrc;
                     mapImage.classList.remove('hidden');
                     mapPlaceholder.classList.add('hidden');
 
-                    // Chờ ảnh bản đồ tải xong để lấy naturalWidth/Height và áp dụng zoom
                     mapImage.onload = () => {
                         mapNaturalWidth = mapImage.naturalWidth;
                         mapNaturalHeight = mapImage.naturalHeight;
-                        currentZoom = 1.0; // Đặt lại zoom về 1.0 khi tải cấu hình
-                        applyZoom(); // Áp dụng zoom và định vị wrapper
+                        currentZoom = 1.0;
+                        applyZoom();
                         
-                        // Tái tạo các điểm đánh dấu sau khi mapImage đã tải
+                        // Recreate markers
                         configData.markers.forEach(m => {
-                            markerCounter++; // Đảm bảo bộ đếm tăng cho ID mới
+                            markerCounter++;
                             const markerElement = document.createElement('div');
                             markerElement.classList.add('marker');
                             markerElement.dataset.markerId = m.id || `marker-${markerCounter}`;
@@ -565,7 +609,6 @@
                             markerElement.style.top = `${m.originalY}px`;
                             markerElement.style.transform = `translate(-50%, -100%) rotate(${m.rotation}deg)`;
 
-                            // Áp dụng kích thước marker đã lưu
                             markerElement.style.borderLeft = `${m.size / 2}px solid transparent`;
                             markerElement.style.borderRight = `${m.size / 2}px solid transparent`;
                             markerElement.style.borderBottom = `${m.size}px solid #ef4444`;
@@ -581,7 +624,7 @@
                             markers.push({
                                 id: m.id || `marker-${markerCounter}`,
                                 element: markerElement,
-                                image: m.image, // Base64 của ảnh điểm đánh dấu
+                                image: m.image, // This is now a URL
                                 rotation: m.rotation,
                                 label: m.label || `M${markerCounter}`,
                                 originalX: m.originalX,
@@ -591,6 +634,15 @@
                         });
                         showMessage("Cấu hình đã được tải thành công!");
                     };
+                    // Handle image load error
+                    mapImage.onerror = () => {
+                        showMessage("Lỗi khi tải ảnh bản đồ. URL có thể không hợp lệ hoặc đã bị xóa.");
+                        mapImage.classList.add('hidden');
+                        mapPlaceholder.classList.remove('hidden');
+                        markers.forEach(m => m.element.remove()); // Clear markers if map fails to load
+                        markers = [];
+                    };
+
                 } else {
                     showMessage("Không tìm thấy cấu hình đã lưu. Bắt đầu với bản đồ trống.", 3000);
                 }
@@ -604,29 +656,24 @@
 
         // --- Event Listeners ---
 
-        mapUploadInput.addEventListener('change', (event) => {
+        mapUploadInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (file) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    mapImage.src = e.target.result;
+                const mapImagePath = `maps/${FINAL_APP_ID}/main_map.${file.name.split('.').pop()}`;
+                const downloadURL = await uploadImageToStorage(file, mapImagePath, mapUploadSpinner);
+                if (downloadURL) {
+                    mapImage.src = downloadURL;
                     mapImage.classList.remove('hidden');
                     mapPlaceholder.classList.add('hidden');
-                    // Xóa các marker hiện có khi tải bản đồ mới
                     markers.forEach(m => m.element.remove());
                     markers = [];
                     selectedMarker = null;
                     markerCounter = 0;
                     currentZoom = 1.0;
                     updateControls();
-                    showMessage('Bản đồ đã được tải lên thành công!');
-                };
-                mapImage.onload = () => {
-                    mapNaturalWidth = mapImage.naturalWidth;
-                    mapNaturalHeight = mapImage.naturalHeight;
-                    applyZoom();
-                };
-                reader.readAsDataURL(file);
+                } else {
+                    showMessage("Không thể tải ảnh bản đồ lên.");
+                }
             }
         });
 
@@ -662,7 +709,7 @@
                 const newMarker = {
                     id: markerId,
                     element: markerElement,
-                    image: null,
+                    image: null, // Will store URL
                     rotation: 0,
                     label: `M${markerCounter}`,
                     originalX: unscaledClickX,
@@ -687,15 +734,17 @@
             }
         });
 
-        markerImageUploadInput.addEventListener('change', (event) => {
+        markerImageUploadInput.addEventListener('change', async (event) => {
             const file = event.target.files[0];
             if (file && selectedMarker) {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    selectedMarker.image = e.target.result; // Lưu Base64 string
+                const markerImagePath = `markers/${FINAL_APP_ID}/${selectedMarker.id}.${file.name.split('.').pop()}`;
+                const downloadURL = await uploadImageToStorage(file, markerImagePath, markerUploadSpinner);
+                if (downloadURL) {
+                    selectedMarker.image = downloadURL; // Store URL
                     showMessage(`Ảnh đã được gán cho điểm đánh dấu '${selectedMarker.label}'.`);
-                };
-                reader.readAsDataURL(file); // Đọc file thành Base64
+                } else {
+                    showMessage("Không thể tải ảnh điểm đánh dấu lên.");
+                }
             }
         });
 
@@ -737,13 +786,26 @@
             }
         });
 
-        deleteMarkerButton.addEventListener('click', () => {
+        // Delete marker and its associated image in Storage
+        deleteMarkerButton.addEventListener('click', async () => {
             if (selectedMarker) {
+                const markerLabelToDelete = selectedMarker.label;
+                if (selectedMarker.image && storage) {
+                    try {
+                        const imageRef = ref(storage, selectedMarker.image);
+                        await deleteObject(imageRef);
+                        showMessage(`Ảnh của điểm đánh dấu '${markerLabelToDelete}' đã được xóa khỏi Storage.`);
+                    } catch (error) {
+                        console.warn(`Không thể xóa ảnh điểm đánh dấu '${markerLabelToDelete}' khỏi Storage (có thể đã không tồn tại):`, error.message);
+                        showMessage(`Lỗi khi xóa ảnh của điểm đánh dấu '${markerLabelToDelete}' khỏi Storage.`);
+                    }
+                }
+
                 const index = markers.findIndex(m => m.id === selectedMarker.id);
                 if (index > -1) {
                     markers[index].element.remove();
                     markers.splice(index, 1);
-                    showMessage(`Điểm đánh dấu '${selectedMarker.label}' đã được xóa.`);
+                    showMessage(`Điểm đánh dấu '${markerLabelToDelete}' đã được xóa.`);
                     selectedMarker = null;
                     updateControls();
                     selectionHint.classList.remove('hidden');
@@ -752,15 +814,44 @@
             }
         });
 
-        clearMarkersButton.addEventListener('click', () => {
-            markers.forEach(m => m.element.remove());
+        // Clear all markers and their associated images in Storage (if any)
+        clearMarkersButton.addEventListener('click', async () => {
+            showMessage("Đang xóa tất cả điểm đánh dấu và ảnh liên quan...", 0);
+            for (const marker of markers) {
+                if (marker.image && storage) {
+                    try {
+                        const imageRef = ref(storage, marker.image);
+                        await deleteObject(imageRef);
+                    } catch (error) {
+                        console.warn(`Không thể xóa ảnh của điểm đánh dấu '${marker.label}' khỏi Storage (có thể đã không tồn tại):`, error.message);
+                    }
+                }
+                marker.element.remove();
+            }
+            // Clear map image if it's from Storage
+            if (mapImage.src && mapImage.src.includes('firebasestorage.googleapis.com')) {
+                 try {
+                    const mapImageRef = ref(storage, mapImage.src);
+                    await deleteObject(mapImageRef);
+                    showMessage("Ảnh bản đồ đã được xóa khỏi Storage.");
+                 } catch (error) {
+                     console.warn("Không thể xóa ảnh bản đồ khỏi Storage:", error.message);
+                     showMessage("Lỗi khi xóa ảnh bản đồ khỏi Storage.");
+                 }
+            }
+
+
+            mapImage.src = ''; // Clear map image
+            mapImage.classList.add('hidden');
+            mapPlaceholder.classList.remove('hidden');
+
             markers = [];
             selectedMarker = null;
             markerCounter = 0;
             updateControls();
             selectionHint.classList.remove('hidden');
             currentMarkerInfo.classList.add('hidden');
-            showMessage('Tất cả điểm đánh dấu đã được xóa.');
+            showMessage('Tất cả điểm đánh dấu và ảnh liên quan đã được xóa!');
         });
 
         zoomInButton.addEventListener('click', () => {
