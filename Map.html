@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Công cụ bản đồ camera</title>
+    <!-- Thư viện Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            padding: 20px;
+        }
+        .map-section, .image-viewer-section {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            background-color: #f8fafc;
+        }
+        .map-container {
+            position: relative;
+            width: 100%;
+            height: 500px;
+            background-color: #e2e8f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto; /* Cho phép cuộn khi phóng to */
+            border-radius: 8px;
+            cursor: crosshair;
+        }
+        .map-wrapper {
+            position: relative; /* Giữ vị trí tương đối để chứa marker */
+            transform-origin: top left; /* Xoay từ góc trên bên trái khi thu phóng */
+            /* Kích thước ban đầu sẽ được thiết lập bằng JS dựa trên ảnh */
+            display: flex; /* Dùng flex để căn giữa ảnh bản đồ */
+            justify-content: center;
+            align-items: center;
+        }
+        .map-image {
+            display: block;
+            max-width: 100%; /* Đảm bảo hình ảnh vừa với wrapper */
+            max-height: 100%;
+            object-fit: contain; /* Đảm bảo hình ảnh vừa với wrapper */
+            position: absolute; /* Để marker có thể đặt trên đó */
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        /* CSS cho chế độ toàn màn hình */
+        .map-container.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 999;
+            background-color: #f8fafc;
+            padding: 0;
+            border-radius: 0;
+        }
+        .map-container.fullscreen .map-wrapper {
+            width: 100%;
+            height: 100%;
+        }
+
+        .marker {
+            position: absolute;
+            width: 0;
+            height: 0;
+            /* Kích thước được thiết lập bằng JS */
+            border-left: 25px solid transparent; /* Kích thước mặc định */
+            border-right: 25px solid transparent; /* Kích thước mặc định */
+            border-bottom: 40px solid #ef4444; /* Kích thước mặc định */
+            cursor: grab;
+            transform-origin: 50% 100%; /* Xoay từ đáy tam giác */
+            transition: border-bottom-color 0.2s ease-in-out;
+            box-sizing: border-box; /* Bao gồm padding và border trong width/height */
+        }
+        .marker:hover {
+            border-bottom-color: #dc2626;
+        }
+        .marker.selected {
+            border-bottom-color: #22c55e; /* Màu xanh lá cây khi được chọn */
+        }
+        .marker-label {
+            position: absolute;
+            top: -30px; /* Điều chỉnh vị trí của nhãn cho tam giác lớn hơn (mặc định) */
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ffffff;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+            pointer-events: none; /* Không chặn sự kiện click vào marker */
+            white-space: nowrap; /* Ngăn nhãn bị ngắt dòng */
+        }
+        .popup {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            display: none;
+        }
+        .popup-content {
+            background-color: #ffffff;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+            position: relative;
+            max-width: 95%; /* Tăng kích thước tối đa của popup */
+            max-height: 95%; /* Tăng kích thước tối đa của popup */
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .popup-image {
+            max-width: 100%;
+            max-height: 85vh; /* Giới hạn chiều cao của ảnh trong popup, cho phép lớn hơn */
+            object-fit: contain;
+            border-radius: 8px;
+        }
+        .close-button {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            font-size: 2rem;
+            color: #333;
+            cursor: pointer;
+            padding: 5px;
+            border-radius: 50%;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .close-button:hover {
+            background-color: #f0f0f0;
+        }
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .button {
+            background-color: #3b82f6;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, transform 0.2s ease-in-out;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .button:hover {
+            background-color: #2563eb;
+            transform: translateY(-2px);
+        }
+        .button:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .custom-file-upload {
+            background-color: #10b981;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s ease-in-out, transform 0.2s ease-in-out;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            display: inline-block;
+        }
+        .custom-file-upload:hover {
+            background-color: #059669;
+            transform: translateY(-2px);
+        }
+        .custom-file-upload:active {
+            transform: translateY(0);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Message box styling */
+        .message-box {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1001;
+            display: none; /* Hidden by default */
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+        }
+        #userIdDisplay {
+            margin-top: 10px;
+            font-size: 0.9rem;
+            color: #4a5568;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-gray-800 text-center mb-6">Công cụ lập bản đồ camera</h1>
+
+        <!-- Phần tải lên bản đồ và điều khiển -->
+        <div class="map-section">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Bản đồ địa hình</h2>
+            <div class="controls mb-4">
+                <label for="mapUpload" class="custom-file-upload">
+                    Tải lên bản đồ
+                </label>
+                <input type="file" id="mapUpload" accept="image/*">
+                <button id="clearMarkersButton" class="button bg-gray-500 hover:bg-gray-600">Xóa tất cả điểm đánh dấu</button>
+                <button id="zoomInButton" class="button">Phóng to (+)</button>
+                <button id="zoomOutButton" class="button">Thu nhỏ (-)</button>
+                <button id="fullscreenMapButton" class="button bg-purple-500 hover:bg-purple-600">Toàn màn hình</button>
+                <button id="saveConfigButton" class="button bg-blue-700 hover:bg-blue-800">Lưu cấu hình</button>
+                <button id="loadConfigButton" class="button bg-green-700 hover:bg-green-800">Tải cấu hình</button>
+            </div>
+            <div id="mapContainer" class="map-container">
+                <div id="mapWrapper" class="map-wrapper">
+                    <img id="mapImage" class="map-image hidden" alt="Bản đồ địa hình">
+                </div>
+                <p id="mapPlaceholder" class="text-gray-500">Tải lên một hình ảnh bản đồ để bắt đầu.</p>
+            </div>
+            <div id="userIdDisplay"></div>
+        </div>
+
+        <!-- Phần điều khiển điểm đánh dấu và xem ảnh -->
+        <div class="image-viewer-section">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Quản lý điểm đánh dấu và xem ảnh</h2>
+            <div class="controls mb-4">
+                <label for="markerImageUpload" class="custom-file-upload">
+                    Tải lên ảnh cho điểm đánh dấu
+                </label>
+                <input type="file" id="markerImageUpload" accept="image/*" disabled>
+                <button id="rotateLeftButton" class="button" disabled>Xoay trái 15°</button>
+                <button id="rotateRightButton" class="button" disabled>Xoay phải 15°</button>
+                <button id="increaseMarkerSizeButton" class="button" disabled>Tăng kích thước tam giác (+)</button>
+                <button id="decreaseMarkerSizeButton" class="button" disabled>Giảm kích thước tam giác (-)</button>
+                <button id="deleteMarkerButton" class="button bg-red-500 hover:bg-red-600" disabled>Xóa điểm đánh dấu đã chọn</button>
+            </div>
+            <p id="selectionHint" class="text-gray-600 mb-2">Chọn một điểm đánh dấu trên bản đồ để gán ảnh hoặc xoay.</p>
+            <p id="currentMarkerInfo" class="text-gray-700 font-medium hidden">Điểm đánh dấu đã chọn: <span id="selectedMarkerId"></span></p>
+        </div>
+    </div>
+
+    <!-- Cửa sổ bật lên xem ảnh -->
+    <div id="imagePopup" class="popup">
+        <div class="popup-content">
+            <button class="close-button" id="closePopupButton">&times;</button>
+            <h3 class="text-xl font-semibold text-gray-800" id="popupTitle">Hình ảnh Camera</h3>
+            <img id="popupImage" class="popup-image" src="" alt="Hình ảnh thực tế">
+            <p class="text-sm text-gray-600" id="popupHint">Nhấp vào hình ảnh để xem kích thước đầy đủ trong một tab mới.</p>
+        </div>
+    </div>
+
+    <!-- Message box -->
+    <div id="messageBox" class="message-box"></div>
+
+    <script type="module">
+        // Firebase imports - KHÔNG THAY ĐỔI CÁC DÒNG NÀY.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // DOM elements
+        const mapUploadInput = document.getElementById('mapUpload');
+        const mapImage = document.getElementById('mapImage');
+        const mapContainer = document.getElementById('mapContainer');
+        const mapWrapper = document.getElementById('mapWrapper');
+        const mapPlaceholder = document.getElementById('mapPlaceholder');
+        const markerImageUploadInput = document.getElementById('markerImageUpload');
+        const rotateLeftButton = document.getElementById('rotateLeftButton');
+        const rotateRightButton = document.getElementById('rotateRightButton');
+        const deleteMarkerButton = document.getElementById('deleteMarkerButton');
+        const clearMarkersButton = document.getElementById('clearMarkersButton');
+        const zoomInButton = document.getElementById('zoomInButton');
+        const zoomOutButton = document.getElementById('zoomOutButton');
+        const fullscreenMapButton = document.getElementById('fullscreenMapButton');
+        const increaseMarkerSizeButton = document.getElementById('increaseMarkerSizeButton');
+        const decreaseMarkerSizeButton = document.getElementById('decreaseMarkerSizeButton');
+        const saveConfigButton = document.getElementById('saveConfigButton');
+        const loadConfigButton = document.getElementById('loadConfigButton');
+        const imagePopup = document.getElementById('imagePopup');
+        const popupImage = document.getElementById('popupImage');
+        const popupTitle = document.getElementById('popupTitle');
+        const closePopupButton = document.getElementById('closePopupButton');
+        const selectionHint = document.getElementById('selectionHint');
+        const currentMarkerInfo = document.getElementById('currentMarkerInfo');
+        const selectedMarkerIdSpan = document.getElementById('selectedMarkerId');
+        const messageBox = document.getElementById('messageBox');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+
+        // Global variables
+        let markers = [];
+        let selectedMarker = null;
+        let markerCounter = 0;
+
+        let currentZoom = 1.0;
+        const zoomStep = 0.2;
+        const minZoom = 0.1;
+        const maxZoom = 4.0;
+
+        let currentMarkerSize = 40;
+        const markerSizeStep = 5;
+        const minMarkerSize = 10;
+        const maxMarkerSize = 100;
+
+        let mapNaturalWidth = 0;
+        let mapNaturalHeight = 0;
+
+        // Firebase variables
+        let app;
+        let db;
+        let auth;
+        let currentUserId = null;
+
+        // --- CẤU HÌNH FIREBASE CỦA BẠN ---
+        // Đây là thông tin cấu hình Firebase mà bạn đã cung cấp.
+        // KHÔNG THAY ĐỔI NỘI DUNG CỦA ĐỐI TƯỢNG NÀY TRONG FILE NÀY NỮA.
+        const MY_FIREBASE_CONFIG = {
+             apiKey: "AIzaSyBfvHmr8lQerlF8pX_CCg1h7f5S8KCaAfk",
+             authDomain: "cameramaptoolapp.firebaseapp.com",
+             projectId: "cameramaptoolapp",
+             storageBucket: "cameramaptoolapp.firebasestorage.app",
+             messagingSenderId: "978491500497",
+             appId: "1:978491500497:web:3dee14f2aaa9270234a2f0"
+        };
+        const MY_APP_ID = MY_FIREBASE_CONFIG.appId; // Lấy APP_ID từ cấu hình của bạn
+
+        // KHÔNG THAY ĐỔI CÁC DÒNG SAU ĐÂY NỮA
+        // Các biến này được cung cấp tự động trong môi trường Canvas.
+        // Nếu bạn chạy cục bộ, các biến này sẽ là 'undefined' hoặc null, và code sẽ dùng MY_FIREBASE_CONFIG.
+        const CANVAS_FIREBASE_CONFIG = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const CANVAS_INITIAL_AUTH_TOKEN = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Chọn cấu hình để dùng: ưu tiên cấu hình Canvas nếu có, nếu không thì dùng cấu hình MY_FIREBASE_CONFIG
+        // Điều này đảm bảo ứng dụng hoạt động cả trong Canvas và khi chạy cục bộ/GitHub Pages.
+        const FINAL_FIREBASE_CONFIG = Object.keys(CANVAS_FIREBASE_CONFIG).length > 0 ? CANVAS_FIREBASE_CONFIG : MY_FIREBASE_CONFIG;
+        const FINAL_APP_ID = FINAL_FIREBASE_CONFIG.appId || MY_APP_ID; // Lấy APP_ID từ cấu hình cuối cùng
+
+
+        // Khởi tạo Firebase (phần này sẽ dùng cấu hình được chọn ở trên)
+        if (Object.keys(FINAL_FIREBASE_CONFIG).length > 0 && FINAL_FIREBASE_CONFIG.apiKey) {
+            app = initializeApp(FINAL_FIREBASE_CONFIG);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    userIdDisplay.textContent = `User ID: ${currentUserId}`;
+                    updateControls();
+                } else {
+                    try {
+                        if (CANVAS_INITIAL_AUTH_TOKEN) { // Dùng token Canvas nếu có
+                            await signInWithCustomToken(auth, CANVAS_INITIAL_AUTH_TOKEN);
+                        } else {
+                            await signInAnonymously(auth); // Hoặc đăng nhập ẩn danh
+                        }
+                    } catch (error) {
+                        console.error("Lỗi xác thực Firebase:", error);
+                        showMessage("Lỗi xác thực Firebase. Vui lòng thử lại.");
+                    }
+                }
+            });
+        } else {
+            console.warn("Không tìm thấy cấu hình Firebase hợp lệ. Chức năng lưu/tải sẽ không hoạt động.");
+            showMessage("Không tìm thấy cấu hình Firebase hợp lệ. Chức năng lưu/tải sẽ không hoạt động.", 5000);
+            updateControls();
+        }
+
+        // --- Core Functions ---
+
+        // Hàm hiển thị thông báo
+        function showMessage(message, duration = 3000) {
+            messageBox.textContent = message;
+            messageBox.style.display = 'block';
+            messageBox.style.opacity = 1;
+            if (duration > 0) { // If duration is 0, it's indefinite
+                setTimeout(() => {
+                    messageBox.style.opacity = 0;
+                    setTimeout(() => messageBox.style.display = 'none', 500);
+                }, duration);
+            }
+        }
+
+        // Hàm áp dụng thu phóng và cập nhật vị trí điểm đánh dấu
+        function applyZoom() {
+            if (!mapImage.src || mapNaturalWidth === 0 || mapNaturalHeight === 0) return;
+
+            let containerWidth = mapContainer.clientWidth;
+            let containerHeight = mapContainer.clientHeight;
+
+            let imgAspectRatio = mapNaturalWidth / mapNaturalHeight;
+            let containerAspectRatio = containerWidth / containerHeight;
+
+            let baseWrapperWidth, baseWrapperHeight;
+
+            if (imgAspectRatio > containerAspectRatio) {
+                baseWrapperWidth = containerWidth;
+                baseWrapperHeight = containerWidth / imgAspectRatio;
+            } else {
+                baseWrapperHeight = containerHeight;
+                baseWrapperWidth = containerHeight * imgAspectRatio;
+            }
+
+            mapWrapper.style.width = `${baseWrapperWidth}px`;
+            mapWrapper.style.height = `${baseWrapperHeight}px`;
+            mapWrapper.style.transform = `scale(${currentZoom})`;
+
+            const scrollLeft = (baseWrapperWidth * currentZoom - containerWidth) / 2;
+            const scrollTop = (baseWrapperHeight * currentZoom - containerHeight) / 2;
+            mapContainer.scrollLeft = scrollLeft > 0 ? scrollLeft : 0;
+            mapContainer.scrollTop = scrollTop > 0 ? scrollTop : 0;
+
+            markers.forEach(marker => {
+                marker.element.style.left = `${marker.originalX}px`;
+                marker.element.style.top = `${marker.originalY}px`;
+                marker.element.style.transform = `translate(-50%, -100%) rotate(${marker.rotation}deg)`;
+            });
+        }
+
+        // Hàm chọn điểm đánh dấu
+        function selectMarker(marker) {
+            if (selectedMarker) {
+                selectedMarker.element.classList.remove('selected');
+            }
+            selectedMarker = marker;
+            selectedMarker.element.classList.add('selected');
+            currentMarkerSize = selectedMarker.size;
+            updateControls();
+            selectionHint.classList.add('hidden');
+            currentMarkerInfo.classList.remove('hidden');
+            selectedMarkerIdSpan.textContent = selectedMarker.label;
+            showMessage(`Điểm đánh dấu '${selectedMarker.label}' đã được chọn.`);
+        }
+
+        // Hàm cập nhật trạng thái của các nút điều khiển
+        function updateControls() {
+            const isMarkerSelected = selectedMarker !== null;
+            markerImageUploadInput.disabled = !isMarkerSelected;
+            rotateLeftButton.disabled = !isMarkerSelected;
+            rotateRightButton.disabled = !isMarkerSelected;
+            deleteMarkerButton.disabled = !isMarkerSelected;
+            increaseMarkerSizeButton.disabled = !isMarkerSelected;
+            decreaseMarkerSizeButton.disabled = !isMarkerSelected;
+
+            const hasMap = mapImage.src && !mapImage.classList.contains('hidden');
+            zoomInButton.disabled = !hasMap;
+            zoomOutButton.disabled = !hasMap;
+            fullscreenMapButton.disabled = !hasMap;
+            saveConfigButton.disabled = !hasMap || !currentUserId; // Disable save if no map or not authenticated
+            loadConfigButton.disabled = !currentUserId; // Disable load if not authenticated
+        }
+
+        // --- Firebase Data Handling ---
+
+        async function saveMapConfiguration() {
+            if (!currentUserId || !db) {
+                showMessage("Lỗi: Không có người dùng được xác thực hoặc cơ sở dữ liệu Firebase không khả dụng.", 4000);
+                return;
+            }
+            if (!mapImage.src || mapImage.classList.contains('hidden')) {
+                showMessage("Vui lòng tải lên bản đồ trước khi lưu cấu hình.", 3000);
+                return;
+            }
+
+            showMessage("Đang lưu cấu hình...", 0); // Show indefinite message
+            const configData = {
+                mapImageSrc: mapImage.src, // Base64 của ảnh bản đồ
+                markers: markers.map(marker => ({
+                    id: marker.id,
+                    originalX: marker.originalX,
+                    originalY: marker.originalY,
+                    rotation: marker.rotation,
+                    size: marker.size,
+                    image: marker.image // Base64 của ảnh điểm đánh dấu
+                }))
+            };
+
+            try {
+                // Lưu cấu hình vào đường dẫn công khai, có thể truy cập bởi appId
+                const docRef = doc(db, `artifacts/${FINAL_APP_ID}/public/data/mapConfigurations`, 'mainMapConfig');
+                await setDoc(docRef, configData);
+                showMessage("Cấu hình đã được lưu thành công!");
+            } catch (error) {
+                console.error("Lỗi khi lưu cấu hình bản đồ:", error);
+                showMessage("Lỗi khi lưu cấu hình bản đồ. Vui lòng kiểm tra console.", 5000);
+            }
+        }
+
+        async function loadMapConfiguration() {
+            if (!currentUserId || !db) {
+                showMessage("Lỗi: Không có người dùng được xác thực hoặc cơ sở dữ liệu Firebase không khả dụng.", 4000);
+                return;
+            }
+
+            showMessage("Đang tải cấu hình...", 0);
+            try {
+                const docRef = doc(db, `artifacts/${FINAL_APP_ID}/public/data/mapConfigurations`, 'mainMapConfig');
+                const docSnap = await getDoc(docRef);
+
+                if (docSnap.exists()) {
+                    const configData = docSnap.data();
+                    
+                    // Xóa các marker hiện có trên bản đồ trước khi tải mới
+                    markers.forEach(m => m.element.remove());
+                    markers = [];
+                    selectedMarker = null;
+                    markerCounter = 0; // Đặt lại bộ đếm cho các marker mới
+
+                    // Tải ảnh bản đồ
+                    mapImage.src = configData.mapImageSrc;
+                    mapImage.classList.remove('hidden');
+                    mapPlaceholder.classList.add('hidden');
+
+                    // Chờ ảnh bản đồ tải xong để lấy naturalWidth/Height và áp dụng zoom
+                    mapImage.onload = () => {
+                        mapNaturalWidth = mapImage.naturalWidth;
+                        mapNaturalHeight = mapImage.naturalHeight;
+                        currentZoom = 1.0; // Đặt lại zoom về 1.0 khi tải cấu hình
+                        applyZoom(); // Áp dụng zoom và định vị wrapper
+                        
+                        // Tái tạo các điểm đánh dấu sau khi mapImage đã tải
+                        configData.markers.forEach(m => {
+                            markerCounter++; // Đảm bảo bộ đếm tăng cho ID mới
+                            const markerElement = document.createElement('div');
+                            markerElement.classList.add('marker');
+                            markerElement.dataset.markerId = m.id || `marker-${markerCounter}`;
+                            
+                            markerElement.style.left = `${m.originalX}px`;
+                            markerElement.style.top = `${m.originalY}px`;
+                            markerElement.style.transform = `translate(-50%, -100%) rotate(${m.rotation}deg)`;
+
+                            // Áp dụng kích thước marker đã lưu
+                            markerElement.style.borderLeft = `${m.size / 2}px solid transparent`;
+                            markerElement.style.borderRight = `${m.size / 2}px solid transparent`;
+                            markerElement.style.borderBottom = `${m.size}px solid #ef4444`;
+
+                            const markerLabel = document.createElement('span');
+                            markerLabel.classList.add('marker-label');
+                            markerLabel.textContent = m.label || `M${markerCounter}`;
+                            markerLabel.style.top = `-${m.size * 0.75}px`;
+                            markerElement.appendChild(markerLabel);
+
+                            mapWrapper.appendChild(markerElement);
+
+                            markers.push({
+                                id: m.id || `marker-${markerCounter}`,
+                                element: markerElement,
+                                image: m.image, // Base64 của ảnh điểm đánh dấu
+                                rotation: m.rotation,
+                                label: m.label || `M${markerCounter}`,
+                                originalX: m.originalX,
+                                originalY: m.originalY,
+                                size: m.size
+                            });
+                        });
+                        showMessage("Cấu hình đã được tải thành công!");
+                    };
+                } else {
+                    showMessage("Không tìm thấy cấu hình đã lưu. Bắt đầu với bản đồ trống.", 3000);
+                }
+            } catch (error) {
+                console.error("Lỗi khi tải cấu hình bản đồ:", error);
+                showMessage("Lỗi khi tải cấu hình bản đồ. Vui lòng kiểm tra console.", 5000);
+            } finally {
+                updateControls();
+            }
+        }
+
+        // --- Event Listeners ---
+
+        mapUploadInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    mapImage.src = e.target.result;
+                    mapImage.classList.remove('hidden');
+                    mapPlaceholder.classList.add('hidden');
+                    // Xóa các marker hiện có khi tải bản đồ mới
+                    markers.forEach(m => m.element.remove());
+                    markers = [];
+                    selectedMarker = null;
+                    markerCounter = 0;
+                    currentZoom = 1.0;
+                    updateControls();
+                    showMessage('Bản đồ đã được tải lên thành công!');
+                };
+                mapImage.onload = () => {
+                    mapNaturalWidth = mapImage.naturalWidth;
+                    mapNaturalHeight = mapImage.naturalHeight;
+                    applyZoom();
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        mapContainer.addEventListener('click', (event) => {
+            if (mapImage.src && !mapImage.classList.contains('hidden') && !event.target.closest('.marker')) {
+                const mapWrapperRect = mapWrapper.getBoundingClientRect();
+                const clickXOnWrapperScaled = event.clientX - mapWrapperRect.left;
+                const clickYOnWrapperScaled = event.clientY - mapWrapperRect.top;
+                const unscaledClickX = clickXOnWrapperScaled / currentZoom;
+                const unscaledClickY = clickYOnWrapperScaled / currentZoom;
+
+                markerCounter++;
+                const markerId = `marker-${markerCounter}`;
+                const markerElement = document.createElement('div');
+                markerElement.classList.add('marker');
+                markerElement.dataset.markerId = markerId;
+                markerElement.style.left = `${unscaledClickX}px`;
+                markerElement.style.top = `${unscaledClickY}px`;
+                markerElement.style.transform = `translate(-50%, -100%)`;
+
+                markerElement.style.borderLeft = `${currentMarkerSize / 2}px solid transparent`;
+                markerElement.style.borderRight = `${currentMarkerSize / 2}px solid transparent`;
+                markerElement.style.borderBottom = `${currentMarkerSize}px solid #ef4444`;
+
+                const markerLabel = document.createElement('span');
+                markerLabel.classList.add('marker-label');
+                markerLabel.textContent = `M${markerCounter}`;
+                markerLabel.style.top = `-${currentMarkerSize * 0.75}px`;
+                markerElement.appendChild(markerLabel);
+
+                mapWrapper.appendChild(markerElement);
+
+                const newMarker = {
+                    id: markerId,
+                    element: markerElement,
+                    image: null,
+                    rotation: 0,
+                    label: `M${markerCounter}`,
+                    originalX: unscaledClickX,
+                    originalY: unscaledClickY,
+                    size: currentMarkerSize
+                };
+                markers.push(newMarker);
+
+                selectMarker(newMarker);
+                showMessage(`Điểm đánh dấu '${newMarker.label}' đã được thêm!`);
+            }
+        });
+
+        mapWrapper.addEventListener('click', (event) => {
+            const clickedMarkerElement = event.target.closest('.marker');
+            if (clickedMarkerElement) {
+                const markerId = clickedMarkerElement.dataset.markerId;
+                const marker = markers.find(m => m.id === markerId);
+                if (marker) {
+                    selectMarker(marker);
+                }
+            }
+        });
+
+        markerImageUploadInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (file && selectedMarker) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    selectedMarker.image = e.target.result; // Lưu Base64 string
+                    showMessage(`Ảnh đã được gán cho điểm đánh dấu '${selectedMarker.label}'.`);
+                };
+                reader.readAsDataURL(file); // Đọc file thành Base64
+            }
+        });
+
+        rotateLeftButton.addEventListener('click', () => {
+            if (selectedMarker) {
+                selectedMarker.rotation -= 15;
+                selectedMarker.element.style.transform = `translate(-50%, -100%) rotate(${selectedMarker.rotation}deg)`;
+            }
+        });
+
+        rotateRightButton.addEventListener('click', () => {
+            if (selectedMarker) {
+                selectedMarker.rotation += 15;
+                selectedMarker.element.style.transform = `translate(-50%, -100%) rotate(${selectedMarker.rotation}deg)`;
+            }
+        });
+
+        increaseMarkerSizeButton.addEventListener('click', () => {
+            if (selectedMarker) {
+                currentMarkerSize = Math.min(maxMarkerSize, currentMarkerSize + markerSizeStep);
+                selectedMarker.size = currentMarkerSize;
+                selectedMarker.element.style.borderLeft = `${selectedMarker.size / 2}px solid transparent`;
+                selectedMarker.element.style.borderRight = `${selectedMarker.size / 2}px solid transparent`;
+                selectedMarker.element.style.borderBottom = `${selectedMarker.size}px solid ${selectedMarker.element.classList.contains('selected') ? '#22c55e' : '#ef4444'}`;
+                selectedMarker.element.querySelector('.marker-label').style.top = `-${selectedMarker.size * 0.75}px`;
+                showMessage(`Kích thước điểm đánh dấu '${selectedMarker.label}': ${selectedMarker.size}px`);
+            }
+        });
+
+        decreaseMarkerSizeButton.addEventListener('click', () => {
+            if (selectedMarker) {
+                currentMarkerSize = Math.max(minMarkerSize, currentMarkerSize - markerSizeStep);
+                selectedMarker.size = currentMarkerSize;
+                selectedMarker.element.style.borderLeft = `${selectedMarker.size / 2}px solid transparent`;
+                selectedMarker.element.style.borderRight = `${selectedMarker.size / 2}px solid transparent`;
+                selectedMarker.element.style.borderBottom = `${selectedMarker.size}px solid ${selectedMarker.element.classList.contains('selected') ? '#22c55e' : '#ef4444'}`;
+                selectedMarker.element.querySelector('.marker-label').style.top = `-${selectedMarker.size * 0.75}px`;
+                showMessage(`Kích thước điểm đánh dấu '${selectedMarker.label}': ${selectedMarker.size}px`);
+            }
+        });
+
+        deleteMarkerButton.addEventListener('click', () => {
+            if (selectedMarker) {
+                const index = markers.findIndex(m => m.id === selectedMarker.id);
+                if (index > -1) {
+                    markers[index].element.remove();
+                    markers.splice(index, 1);
+                    showMessage(`Điểm đánh dấu '${selectedMarker.label}' đã được xóa.`);
+                    selectedMarker = null;
+                    updateControls();
+                    selectionHint.classList.remove('hidden');
+                    currentMarkerInfo.classList.add('hidden');
+                }
+            }
+        });
+
+        clearMarkersButton.addEventListener('click', () => {
+            markers.forEach(m => m.element.remove());
+            markers = [];
+            selectedMarker = null;
+            markerCounter = 0;
+            updateControls();
+            selectionHint.classList.remove('hidden');
+            currentMarkerInfo.classList.add('hidden');
+            showMessage('Tất cả điểm đánh dấu đã được xóa.');
+        });
+
+        zoomInButton.addEventListener('click', () => {
+            currentZoom = Math.min(maxZoom, currentZoom + zoomStep);
+            applyZoom();
+            showMessage(`Mức thu phóng bản đồ: ${Math.round(currentZoom * 100)}%`);
+        });
+
+        zoomOutButton.addEventListener('click', () => {
+            currentZoom = Math.max(minZoom, currentZoom - zoomStep);
+            applyZoom();
+            showMessage(`Mức thu phóng bản đồ: ${Math.round(currentZoom * 100)}%`);
+        });
+
+        fullscreenMapButton.addEventListener('click', () => {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else if (mapContainer.requestFullscreen) {
+                mapContainer.requestFullscreen();
+            } else if (mapContainer.webkitRequestFullscreen) {
+                mapContainer.webkitRequestFullscreen();
+            } else if (mapContainer.msRequestFullscreen) {
+                mapContainer.msRequestFullscreen();
+            }
+        });
+
+        document.addEventListener('fullscreenchange', () => {
+            if (document.fullscreenElement) {
+                mapContainer.classList.add('fullscreen');
+                fullscreenMapButton.textContent = 'Thoát toàn màn hình';
+            } else {
+                mapContainer.classList.remove('fullscreen');
+                fullscreenMapButton.textContent = 'Toàn màn hình';
+            }
+            applyZoom();
+            showMessage(`Chế độ toàn màn hình: ${document.fullscreenElement ? 'Bật' : 'Tắt'}`);
+        });
+
+        mapWrapper.addEventListener('click', (event) => {
+            const clickedMarkerElement = event.target.closest('.marker');
+            if (clickedMarkerElement) {
+                const markerId = clickedMarkerElement.dataset.markerId;
+                const marker = markers.find(m => m.id === markerId);
+                if (marker && marker.image) {
+                    popupImage.src = marker.image;
+                    popupTitle.textContent = `Hình ảnh từ điểm đánh dấu: ${marker.label}`;
+                    imagePopup.style.display = 'flex';
+                } else if (marker && !marker.image) {
+                    showMessage('Không có hình ảnh nào được gán cho điểm đánh dấu này.');
+                }
+            }
+        });
+
+        closePopupButton.addEventListener('click', () => {
+            imagePopup.style.display = 'none';
+            popupImage.src = '';
+        });
+
+        popupImage.addEventListener('click', () => {
+            if (popupImage.src) {
+                window.open(popupImage.src, '_blank');
+            }
+        });
+
+        saveConfigButton.addEventListener('click', saveMapConfiguration);
+        loadConfigButton.addEventListener('click', loadMapConfiguration);
+
+        // Initial setup
+        updateControls();
+    </script>
+</body>
+</html>
